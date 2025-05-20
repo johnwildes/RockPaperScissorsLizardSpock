@@ -14,38 +14,31 @@ on:
 
 jobs:
   buildpush:
-    runs-on: ubuntu-16.04
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v1
-    - name: Build the Docker image
-      working-directory: Source/Services/RPSLS.NodePlayer.Api
-      run: docker build . --file Dockerfile --tag ${{ secrets.ACR_NAME }}.azurecr.io/node.player:gh-${{ github.sha }}
-    - name: Login to Azure
-      uses: azure/login@v1
+    - uses: actions/checkout@v4
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v3
       with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-    - name: Set Azure subscription
-      run: |
-        az account set -s ${{ secrets.AZURE_SUBSCRIPTION }}
-    - name: Docker push
-      run: |
-        az acr login -n ${{ secrets.ACR_NAME }}
-        docker push ${{ secrets.ACR_NAME }}.azurecr.io/node.player:gh-${{ github.sha }}
-    - name: Set AKS kubectl context
-      uses: azure/aks-set-context@v1
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Build and Push Docker image
+      uses: docker/build-push-action@v5
       with:
-        creds: '${{ secrets.AZURE_CREDENTIALS }}'
-        cluster-name: ${{ secrets.CLUSTER_NAME }}
-        resource-group: ${{ secrets.RESOURCE_GROUP }}        
-    - name: Init Helm
+        context: ./Source/Services/RPSLS.NodePlayer.Api
+        file: ./Source/Services/RPSLS.NodePlayer.Api/Dockerfile
+        push: true
+        tags: ghcr.io/${{ github.repository_owner }}/node.player:gh-${{ github.sha }}
+    - name: Helm registry login (GHCR)
       run: |
-        az acr helm repo add -n ${{ secrets.ACR_NAME }}
+        echo ${{ secrets.GITHUB_TOKEN }} | helm registry login ghcr.io --username ${{ github.actor }} --password-stdin
     - name: Package Helm chart
       run: |
-        helm package  Deploy/helm/node-player -d Deploy/helm/__charts --version 1.0.0-${{ github.sha }}
-    - name: Upload chart to ACR
+        helm package Deploy/helm/node-player -d Deploy/helm/__charts --version 1.0.0-${{ github.sha }}
+    - name: Push Helm chart to GHCR (OCI)
       run: |
-        az acr helm push Deploy/helm/__charts/node-player-1.0.0-${{ github.sha }}.tgz -n ${{ secrets.ACR_NAME }}
+        helm push Deploy/helm/__charts/node-player-1.0.0-${{ github.sha }}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
     - name: Generate config file
       shell: pwsh
       run: |
@@ -53,11 +46,9 @@ jobs:
         Deploy/powershell/Generate-Config.ps1 -gvaluesTemplate gvalues.template.gh -resourceGroup ${{ secrets.RESOURCE_GROUP }} -outputFile _values-gh.yaml -aksHost ${{ secrets.AKS_HOST }} -resourceGroupAcr ${{ secrets.RESOURCE_GROUP_ACR }}
     - name: Install Helm Chart
       run: |
-        helm repo update
-        helm upgrade --install -f Deploy/powershell/_values-gh.yaml --set image.repository=${{ secrets.ACR_NAME }}.azurecr.io/node.player --set image.tag=gh-${{ github.sha }} --set replicaCount=2  node-player  ${{ secrets.ACR_NAME }}/node-player --version=1.0.0-${{ github.sha }}
-      
-       
-       
-    
-     
-      
+        helm upgrade --install -f Deploy/powershell/_values-gh.yaml --set image.repository=ghcr.io/${{ github.repository_owner }}/node.player --set image.tag=gh-${{ github.sha }} --set replicaCount=2 node-player oci://ghcr.io/${{ github.repository_owner }}/charts/node-player --version=1.0.0-${{ github.sha }}
+
+
+
+
+
